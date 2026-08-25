@@ -19,43 +19,95 @@ The agent works like a clinic front-desk assistant. It checks appointment availa
 
 ## System Architecture
 
-```text
-User / Client
-    |
-    v
-FastAPI Application
-    |
-    |-- /chat
-    |     |
-    |     v
-    |  LangGraph Agent
-    |     |
-    |     |-- Groq LLM
-    |     |-- System Prompt
-    |     |-- Tool Router
-    |     |
-    |     |-- check_availability Tool
-    |     |       |
-    |     |       v
-    |     |    Cal.com Slots API
-    |     |
-    |     |-- create_slot Tool
-    |             |
-    |             v
-    |          Cal.com Bookings API
-    |
-    |-- Redis Checkpointer
-    |     |
-    |     v
-    |  Agent state and message memory
-    |
-    |-- PostgreSQL Database
-          |
-          v
-       Conversation history
+```mermaid
+flowchart TD
+    UserQuery["User Query"]
+    ChatAPI["FastAPI /chat Endpoint"]
+    SessionState["Session Thread Resolver"]
+    AgentNode["LangGraph Agent Node"]
+    SystemPrompt["Dynamic System Prompt"]
+    GroqLLM["Groq LLM"]
+    ToolDecision{"Tool Call Needed?"}
+    AvailabilityTool["check_availability Tool"]
+    BookingTool["create_slot Tool"]
+    CalSlots["Cal.com Slots API"]
+    CalBookings["Cal.com Bookings API"]
+    ToolResult["Tool Result"]
+    FinalResponse["Final Assistant Response"]
+    HistoryAPI["GET /conversations/{session_id}"]
+
+    subgraph Memory["Memory Layer"]
+        Redis["Redis Checkpointer<br/>Short-Term Agent State"]
+        Postgres["PostgreSQL<br/>Long-Term Conversation History"]
+    end
+
+    UserQuery --> ChatAPI
+    ChatAPI --> SessionState
+    SessionState --> AgentNode
+    AgentNode --> SystemPrompt
+    AgentNode --> GroqLLM
+    GroqLLM --> ToolDecision
+
+    ToolDecision -- "Check slots" --> AvailabilityTool
+    ToolDecision -- "Create booking" --> BookingTool
+    ToolDecision -- "No tool needed" --> FinalResponse
+
+    AvailabilityTool --> CalSlots
+    BookingTool --> CalBookings
+    CalSlots --> ToolResult
+    CalBookings --> ToolResult
+    ToolResult --> AgentNode
+    AgentNode --> FinalResponse
+
+    SessionState -. "thread_id state" .-> Redis
+    AgentNode -. "load / save state" .-> Redis
+    FinalResponse -. "archive message" .-> Postgres
+    HistoryAPI -. "read history" .-> Postgres
+
+    classDef node fill:#1f2933,stroke:#8b949e,stroke-width:1px,color:#f8fafc;
+    classDef decision fill:#253040,stroke:#c9d1d9,stroke-width:1px,color:#f8fafc;
+    classDef memory fill:#30363d,stroke:#8b949e,stroke-width:1px,color:#f8fafc;
+    classDef external fill:#182635,stroke:#58a6ff,stroke-width:1px,color:#f8fafc;
+
+    class UserQuery,ChatAPI,SessionState,AgentNode,SystemPrompt,GroqLLM,AvailabilityTool,BookingTool,ToolResult,FinalResponse,HistoryAPI node;
+    class ToolDecision decision;
+    class Redis,Postgres memory;
+    class CalSlots,CalBookings external;
 ```
 
 ## Booking Flow
+
+```mermaid
+sequenceDiagram
+    participant U as User
+    participant API as FastAPI
+    participant A as LangGraph Agent
+    participant G as Groq LLM
+    participant C as Cal.com
+    participant R as Redis
+    participant DB as PostgreSQL
+
+    U->>API: Send message with session_id
+    API->>A: Invoke graph with thread_id
+    A->>R: Load conversation state
+    A->>G: Interpret user intent
+
+    alt User provides date/time
+        A->>C: check_availability
+        C-->>A: Available slots
+        A-->>U: Ask for name, email, reason
+    else Missing date/time
+        A-->>U: Ask for preferred date and start time
+    end
+
+    U->>API: Provide details and confirmation
+    API->>A: Continue booking flow
+    A->>C: create_slot
+    C-->>A: Booking confirmation
+    A->>R: Save updated agent state
+    API->>DB: Save human and AI messages
+    A-->>U: Return booking details
+```
 
 1. User asks to book an appointment.
 2. Agent asks for the appointment date and preferred time.
@@ -323,4 +375,3 @@ This prevents a completed appointment from leaking into the next appointment flo
 - Add email validation
 - Add frontend chat UI
 - Add Docker Compose for API, Redis, and PostgreSQL
-
