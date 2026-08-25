@@ -1,0 +1,16 @@
+langchain
+langchain-groq
+langgraph
+langchain-community
+python-decouple
+uvicorn[standard]
+pydantic
+httpx
+fastapi
+python-dateutil
+langchain-core
+uvicorn
+langchain_openai
+langgraph-checkpoint-redis
+sqlalchemy
+psycopg2-binary
